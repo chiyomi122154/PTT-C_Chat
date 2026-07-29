@@ -1,0 +1,91 @@
+# 放置路徑：.github/workflows/ptt_daily.yml
+name: PTT C_Chat 每日爬蟲
+
+on:
+  schedule:
+    # cron 一律是 UTC。UTC 00:05 = 台灣時間 08:05
+    # 刻意避開整點，因為每小時 00 分是 GitHub 排程尖峰，延遲會比較嚴重
+    - cron: '5 0 * * *'
+
+  # 允許在 Actions 頁面手動執行（測試用）
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '指定日期 YYYY-MM-DD（留空 = 昨天）'
+        required: false
+        default: ''
+      dry_run:
+        description: '只看 log 不推 LINE'
+        type: boolean
+        default: false
+
+# 需要寫入權限才能把抓到的 JSON commit 回 repo
+permissions:
+  contents: write
+
+# 避免手動觸發和排程同時跑
+concurrency:
+  group: ptt-daily
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 取得程式碼
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 執行爬蟲
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          MIN_PUSH: '20'
+          MAX_ITEMS: '25'
+          REQUEST_DELAY: '0.5'
+          # 透過 env 傳入，不要直接把 ${{ }} 插進 shell 指令（避免 script injection）
+          IN_DATE: ${{ inputs.date }}
+          IN_DRY: ${{ inputs.dry_run }}
+        run: |
+          ARGS=""
+          if [ -n "$IN_DATE" ]; then
+            ARGS="$ARGS --date $IN_DATE"
+          fi
+          if [ "$IN_DRY" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          echo "執行參數：$ARGS"
+          python ptt_daily.py $ARGS
+
+      - name: 把當日資料存回 repo
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "沒有新資料，略過 commit"
+          else
+            git commit -m "data: C_Chat $(TZ=Asia/Taipei date -d 'yesterday' +%Y-%m-%d)"
+            git push
+          fi
+
+      # 備用：就算不 commit 回 repo，也能在 Actions 頁面下載當次結果（保留 30 天）
+      - name: 上傳為 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptt-data
+          path: data/
+          if-no-files-found: ignore
+          retention-days: 30

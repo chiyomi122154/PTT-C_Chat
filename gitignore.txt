@@ -1,0 +1,14 @@
+# 檔名請改成 .gitignore（前面有一個點）
+
+# 絕對不能上傳！裡面有 LINE token
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# 本機測試 log
+*.log
+cron.log
